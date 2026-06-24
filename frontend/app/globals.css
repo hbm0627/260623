@@ -430,6 +430,15 @@ a {
   font-weight: 850;
 }
 
+.form-success {
+  margin: 12px 0 0;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(50, 214, 160, 0.12);
+  color: #38d896;
+  font-weight: 850;
+}
+
 .result-summary {
   margin: 0 0 14px;
   color: #332b3f;
@@ -1017,6 +1026,23 @@ a {
 }
 
 .quick-link-grid a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  background: rgba(255, 79, 154, 0.1);
+  color: var(--pink);
+  font-weight: 950;
+}
+
+.quick-link-grid button,
+.auth-provider-button {
+  border: 0;
+  cursor: pointer;
+}
+
+.quick-link-grid button {
   display: inline-flex;
   min-height: 44px;
   align-items: center;
