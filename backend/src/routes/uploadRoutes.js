@@ -1,28 +1,10 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { Router } from "express";
 import multer from "multer";
+import { supabase, throwIfSupabaseError } from "../db/client.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const backendRoot = path.resolve(__dirname, "..", "..");
-const mediaDir = path.join(backendRoot, "media");
-
-fs.mkdirSync(mediaDir, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: mediaDir,
-  filename: (req, file, callback) => {
-    const extension = path.extname(file.originalname).toLowerCase();
-    const safeName = `${Date.now()}-${Math.round(Math.random() * 1e9)}${extension}`;
-    callback(null, safeName);
-  },
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (req, file, callback) => {
     if (!file.mimetype.startsWith("image/")) {
@@ -35,10 +17,23 @@ const upload = multer({
 
 export const uploadRouter = Router();
 
-uploadRouter.post("/image", authMiddleware, upload.single("image"), (req, res) => {
+uploadRouter.post("/image", authMiddleware, upload.single("image"), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ message: "이미지 파일은 필수입니다." });
 
-  res.status(201).json({
-    imageUrl: `/media/${req.file.filename}`,
-  });
+  try {
+    const bucket = process.env.SUPABASE_STORAGE_BUCKET || "media";
+    const extension = req.file.originalname.includes(".") ? req.file.originalname.split(".").pop().toLowerCase() : "bin";
+    const objectPath = `uploads/${req.user.id}/${Date.now()}-${Math.round(Math.random() * 1e9)}.${extension}`;
+
+    const { error } = await supabase.storage.from(bucket).upload(objectPath, req.file.buffer, {
+      contentType: req.file.mimetype,
+      upsert: false,
+    });
+    throwIfSupabaseError(error);
+
+    const { data } = supabase.storage.from(bucket).getPublicUrl(objectPath);
+    return res.status(201).json({ imageUrl: data.publicUrl });
+  } catch (error) {
+    return next(error);
+  }
 });

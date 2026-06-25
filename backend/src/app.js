@@ -1,20 +1,28 @@
 import cors from "cors";
 import dotenv from "dotenv";
 import express from "express";
-import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { authRouter } from "./routes/authRoutes.js";
+import { postRouter } from "./routes/postRoutes.js";
+import { commentRouter } from "./routes/commentRoutes.js";
+import { userRouter } from "./routes/userRoutes.js";
+import { adminRouter } from "./routes/adminRoutes.js";
+import { uploadRouter } from "./routes/uploadRoutes.js";
+import { supabase, throwIfSupabaseError } from "./db/client.js";
+import { getUserById } from "./db/repository.js";
+import { verifyToken } from "./utils/jwt.js";
 
 dotenv.config();
 
 const app = express();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const dataDir = path.resolve(__dirname, "..", "data");
-const readingsPath = path.join(dataDir, "readings.json");
+const backendRoot = path.resolve(__dirname, "..");
 
 app.use(cors({ origin: process.env.FRONTEND_ORIGIN || "http://localhost:3000" }));
 app.use(express.json({ limit: "2mb" }));
+app.use("/media", express.static(path.join(backendRoot, "media")));
 
 const now = () => new Date().toISOString();
 const hasOpenAiKey = Boolean(process.env.OPENAI_API_KEY);
@@ -45,8 +53,6 @@ const services = [
     priceType: "tarot",
   },
 ];
-
-const sampleAnalyses = [];
 
 const majorArcana = [
   "The Fool",
@@ -123,40 +129,105 @@ const tarotDeck = [
   ),
 ];
 
-async function readReadings() {
-  try {
-    const content = await fs.readFile(readingsPath, "utf8");
-    return JSON.parse(content);
-  } catch {
-    return [];
-  }
-}
-
 async function saveReading(reading) {
-  await fs.mkdir(dataDir, { recursive: true });
-  const readings = await readReadings();
-  readings.unshift(reading);
-  await fs.writeFile(readingsPath, JSON.stringify(readings.slice(0, 100), null, 2));
+  const { error } = await supabase.from("readings").insert({
+    id: reading.id,
+    type: reading.type,
+    user_id: reading.userId,
+    question: reading.question || "",
+    topic: reading.topic || "",
+    card: reading.card,
+    interpretation: reading.interpretation,
+  });
+  throwIfSupabaseError(error);
 }
 
-function getAuthUser(req) {
+async function readReadings(userId) {
+  const { data, error } = await supabase
+    .from("readings")
+    .select("*")
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(100);
+  throwIfSupabaseError(error);
+
+  return (data || []).map((reading) => ({
+    id: reading.id,
+    type: reading.type,
+    userId: reading.user_id,
+    question: reading.question,
+    topic: reading.topic,
+    card: reading.card,
+    interpretation: reading.interpretation,
+    createdAt: reading.created_at,
+  }));
+}
+
+async function getAuthUser(req) {
   const header = req.get("authorization") || "";
   const token = header.replace(/^Bearer\s+/i, "");
   if (!token) return null;
   if (token === "local-test-token") {
     return { id: "local-test-user", email: "local@saju.test", nickname: "로컬 사용자" };
   }
-  return null;
+  const payload = verifyToken(token);
+  const user = await getUserById(payload.id);
+  if (!user) return null;
+  return { id: user.id, email: user.email, nickname: user.name };
 }
 
-function requireAuth(req, res, next) {
-  const user = getAuthUser(req);
-  if (!user) {
+async function requireAuth(req, res, next) {
+  try {
+    const user = await getAuthUser(req);
+    if (!user) {
+      return res.status(401).json({ message: "로그인한 회원만 결과 분석을 볼 수 있습니다." });
+    }
+    req.user = user;
+    return next();
+  } catch {
     return res.status(401).json({ message: "로그인한 회원만 결과 분석을 볼 수 있습니다." });
   }
-  req.user = user;
-  next();
 }
+
+async function saveAnalysis(analysis) {
+  const { error } = await supabase.from("analyses").insert({
+    id: analysis.id,
+    user_id: analysis.userId,
+    input: analysis.input,
+    summary: analysis.summary,
+    highlights: analysis.highlights,
+    detail: analysis.detail,
+    disclaimer: analysis.disclaimer,
+  });
+  throwIfSupabaseError(error);
+}
+
+async function readAnalyses() {
+  const { data, error } = await supabase
+    .from("analyses")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(10);
+  throwIfSupabaseError(error);
+
+  return (data || []).map((analysis) => ({
+    id: analysis.id,
+    userId: analysis.user_id,
+    input: analysis.input,
+    summary: analysis.summary,
+    highlights: analysis.highlights,
+    detail: analysis.detail,
+    disclaimer: analysis.disclaimer,
+    createdAt: analysis.created_at,
+  }));
+}
+
+app.use("/api/auth", authRouter);
+app.use("/api/posts", postRouter);
+app.use("/api/comments", commentRouter);
+app.use("/api/users", userRouter);
+app.use("/api/admin", adminRouter);
+app.use("/api/uploads", uploadRouter);
 
 function getCardByNumber(number) {
   const normalized = Number(number);
@@ -296,44 +367,69 @@ app.post("/api/tarot/interpret", requireAuth, async (req, res, next) => {
   }
 });
 
-app.post("/api/auth/mock-login", (req, res) => {
+app.post("/api/auth/mock-login", async (req, res, next) => {
   const email = req.body?.email || "local@saju.test";
-  res.json({
-    session: {
-      accessToken: "local-test-token",
-      provider: req.body?.provider || "email",
-      expiresAt: new Date(Date.now() + 1000 * 60 * 60).toISOString(),
-    },
-    user: {
+  const nickname = req.body?.nickname || "로컬 사용자";
+
+  try {
+    const { error } = await supabase.from("users").upsert({
       id: "local-test-user",
+      name: nickname,
       email,
-      nickname: req.body?.nickname || "로컬 사용자",
-      avatarUrl: null,
-      createdAt: now(),
-    },
-  });
+      password: "local-test-token",
+      role: "user",
+      bio: "",
+      is_active: true,
+      updated_at: now(),
+    });
+    throwIfSupabaseError(error);
+
+    return res.json({
+      session: {
+        accessToken: "local-test-token",
+        provider: req.body?.provider || "email",
+        expiresAt: new Date(Date.now() + 1000 * 60 * 60).toISOString(),
+      },
+      user: {
+        id: "local-test-user",
+        email,
+        nickname,
+        avatarUrl: null,
+        createdAt: now(),
+      },
+    });
+  } catch (error) {
+    return next(error);
+  }
 });
 
-app.post("/api/analysis", (req, res) => {
+app.post("/api/analysis", async (req, res, next) => {
   const { name, birthDate, birthTime } = req.body || {};
 
   if (!birthDate) {
     return res.status(400).json({ message: "생년월일은 필수입니다." });
   }
 
-  const analysis = buildMockAnalysis({ name, birthDate, birthTime, gender: req.body.gender || "미선택" });
-  sampleAnalyses.unshift(analysis);
-  res.status(201).json({ analysis });
+  try {
+    const analysis = buildMockAnalysis({ name, birthDate, birthTime, gender: req.body.gender || "미선택" });
+    await saveAnalysis(analysis);
+    return res.status(201).json({ analysis });
+  } catch (error) {
+    return next(error);
+  }
 });
 
-app.get("/api/analysis/history", (req, res) => {
-  res.json({ analyses: sampleAnalyses.slice(0, 10) });
+app.get("/api/analysis/history", async (req, res, next) => {
+  try {
+    return res.json({ analyses: await readAnalyses() });
+  } catch (error) {
+    return next(error);
+  }
 });
 
 app.get("/api/readings", requireAuth, async (req, res, next) => {
   try {
-    const readings = await readReadings();
-    res.json({ readings: readings.filter((reading) => reading.userId === req.user.id) });
+    res.json({ readings: await readReadings(req.user.id) });
   } catch (error) {
     next(error);
   }

@@ -1,13 +1,9 @@
 import { Router } from "express";
-import { openDatabase } from "../db/client.js";
+import { supabase, throwIfSupabaseError } from "../db/client.js";
+import { mapPost, now, publicUser } from "../db/repository.js";
 import { authMiddleware } from "../middlewares/authMiddleware.js";
 
 export const userRouter = Router();
-
-function publicUser(user) {
-  const { password, ...safeUser } = user;
-  return safeUser;
-}
 
 userRouter.get("/me", authMiddleware, (req, res) => {
   res.json({ user: publicUser(req.user) });
@@ -15,99 +11,86 @@ userRouter.get("/me", authMiddleware, (req, res) => {
 
 userRouter.patch("/me", authMiddleware, async (req, res, next) => {
   const { name, bio } = req.body;
-  const db = await openDatabase();
 
   try {
-    await db.run(
-      "UPDATE users SET name = ?, bio = ?, updated_at = datetime('now') WHERE id = ?",
-      name || req.user.name,
-      bio ?? req.user.bio,
-      req.user.id,
-    );
+    const { data, error } = await supabase
+      .from("users")
+      .update({
+        name: name || req.user.name,
+        bio: bio ?? req.user.bio,
+        updated_at: now(),
+      })
+      .eq("id", req.user.id)
+      .select("*")
+      .single();
+    throwIfSupabaseError(error);
 
-    const user = await db.get("SELECT id, name, email, role, bio, is_active FROM users WHERE id = ?", req.user.id);
-    res.json({
-      user: {
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        bio: user.bio,
-        isActive: Boolean(user.is_active),
-      },
-    });
+    return res.json({ user: publicUser(data) });
   } catch (error) {
-    next(error);
-  } finally {
-    await db.close();
+    return next(error);
   }
 });
 
 userRouter.get("/me/posts", authMiddleware, async (req, res, next) => {
-  const db = await openDatabase();
-
   try {
-    const posts = await db.all(
-      `
-        SELECT
-          id,
-          title,
-          content,
-          image_url AS imageUrl,
-          author_id AS authorId,
-          view_count AS viewCount,
-          is_deleted AS isDeleted,
-          created_at AS createdAt,
-          updated_at AS updatedAt
-        FROM posts
-        WHERE author_id = ? AND is_deleted = 0
-        ORDER BY created_at DESC
-      `,
-      req.user.id,
-    );
-    res.json({ posts: posts.map((post) => ({ ...post, isDeleted: Boolean(post.isDeleted) })) });
+    const { data, error } = await supabase
+      .from("posts")
+      .select("*")
+      .eq("author_id", req.user.id)
+      .eq("is_deleted", false)
+      .order("created_at", { ascending: false });
+    throwIfSupabaseError(error);
+
+    return res.json({ posts: (data || []).map((post) => mapPost(post)) });
   } catch (error) {
-    next(error);
-  } finally {
-    await db.close();
+    return next(error);
   }
 });
 
 userRouter.delete("/me", authMiddleware, async (req, res, next) => {
-  const db = await openDatabase();
-
   try {
-    await db.exec("BEGIN TRANSACTION");
-
-    const userPosts = await db.all("SELECT id FROM posts WHERE author_id = ?", req.user.id);
-    const postIds = userPosts.map((post) => post.id);
+    const { data: userPosts, error: postError } = await supabase.from("posts").select("id").eq("author_id", req.user.id);
+    throwIfSupabaseError(postError);
+    const postIds = (userPosts || []).map((post) => post.id);
 
     if (postIds.length) {
-      const placeholders = postIds.map(() => "?").join(",");
-      await db.run(
-        `DELETE FROM comment_reactions WHERE comment_id IN (SELECT id FROM comments WHERE post_id IN (${placeholders}))`,
-        ...postIds,
-      );
-      await db.run(`DELETE FROM comments WHERE post_id IN (${placeholders})`, ...postIds);
-      await db.run(`DELETE FROM post_reactions WHERE post_id IN (${placeholders})`, ...postIds);
-      await db.run(`DELETE FROM posts WHERE id IN (${placeholders})`, ...postIds);
+      const { data: postComments, error: postCommentsError } = await supabase.from("comments").select("id").in("post_id", postIds);
+      throwIfSupabaseError(postCommentsError);
+      const postCommentIds = (postComments || []).map((comment) => comment.id);
+
+      if (postCommentIds.length) {
+        const { error } = await supabase.from("comment_reactions").delete().in("comment_id", postCommentIds);
+        throwIfSupabaseError(error);
+      }
+
+      let result = await supabase.from("comments").delete().in("post_id", postIds);
+      throwIfSupabaseError(result.error);
+      result = await supabase.from("post_reactions").delete().in("post_id", postIds);
+      throwIfSupabaseError(result.error);
+      result = await supabase.from("posts").delete().in("id", postIds);
+      throwIfSupabaseError(result.error);
     }
 
-    await db.run(
-      "DELETE FROM comment_reactions WHERE comment_id IN (SELECT id FROM comments WHERE author_id = ?)",
-      req.user.id,
-    );
-    await db.run("DELETE FROM comments WHERE author_id = ?", req.user.id);
-    await db.run("DELETE FROM comment_reactions WHERE user_id = ?", req.user.id);
-    await db.run("DELETE FROM post_reactions WHERE user_id = ?", req.user.id);
-    await db.run("DELETE FROM users WHERE id = ?", req.user.id);
+    const { data: ownComments, error: ownCommentsError } = await supabase.from("comments").select("id").eq("author_id", req.user.id);
+    throwIfSupabaseError(ownCommentsError);
+    const ownCommentIds = (ownComments || []).map((comment) => comment.id);
 
-    await db.exec("COMMIT");
-    res.json({ message: "회원탈퇴가 완료되었습니다." });
+    if (ownCommentIds.length) {
+      const { error } = await supabase.from("comment_reactions").delete().in("comment_id", ownCommentIds);
+      throwIfSupabaseError(error);
+    }
+
+    let result = await supabase.from("comments").delete().eq("author_id", req.user.id);
+    throwIfSupabaseError(result.error);
+    result = await supabase.from("comment_reactions").delete().eq("user_id", req.user.id);
+    throwIfSupabaseError(result.error);
+    result = await supabase.from("post_reactions").delete().eq("user_id", req.user.id);
+    throwIfSupabaseError(result.error);
+    result = await supabase.from("users").delete().eq("id", req.user.id);
+    throwIfSupabaseError(result.error);
+
+    return res.json({ message: "회원탈퇴가 완료되었습니다." });
   } catch (error) {
-    await db.exec("ROLLBACK").catch(() => {});
-    next(error);
-  } finally {
-    await db.close();
+    return next(error);
   }
 });

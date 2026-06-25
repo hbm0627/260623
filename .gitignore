@@ -10,3 +10,4 @@ dist/
 backend/data/readings.json
 backend/media/*
 !backend/media/.gitkeep
+supabase/.temp/

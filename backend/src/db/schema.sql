@@ -1,80 +1,97 @@
-PRAGMA foreign_keys = ON;
-
-CREATE TABLE IF NOT EXISTS users (
-  id TEXT PRIMARY KEY,
-  name TEXT NOT NULL,
-  email TEXT NOT NULL UNIQUE,
-  password TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
-  bio TEXT NOT NULL DEFAULT '',
-  is_active INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+create table if not exists public.users (
+  id text primary key,
+  name text not null,
+  email text not null unique,
+  password text not null,
+  role text not null default 'user' check (role in ('user', 'admin')),
+  bio text not null default '',
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
-CREATE TABLE IF NOT EXISTS posts (
-  id TEXT PRIMARY KEY,
-  title TEXT NOT NULL,
-  content TEXT NOT NULL,
-  image_url TEXT,
-  author_id TEXT NOT NULL,
-  view_count INTEGER NOT NULL DEFAULT 0,
-  is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (author_id) REFERENCES users(id)
+create table if not exists public.posts (
+  id text primary key,
+  title text not null,
+  content text not null,
+  image_url text,
+  author_id text not null references public.users(id) on delete cascade,
+  view_count integer not null default 0,
+  is_deleted boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id);
-CREATE INDEX IF NOT EXISTS idx_posts_is_deleted ON posts(is_deleted);
+create index if not exists idx_posts_author_id on public.posts(author_id);
+create index if not exists idx_posts_is_deleted on public.posts(is_deleted);
 
-CREATE TABLE IF NOT EXISTS post_reactions (
-  id TEXT PRIMARY KEY,
-  post_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('like', 'dislike')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (post_id) REFERENCES posts(id),
-  FOREIGN KEY (user_id) REFERENCES users(id),
-  UNIQUE (post_id, user_id)
+create table if not exists public.post_reactions (
+  id text primary key,
+  post_id text not null references public.posts(id) on delete cascade,
+  user_id text not null references public.users(id) on delete cascade,
+  type text not null check (type in ('like', 'dislike')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (post_id, user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_post_reactions_post_id ON post_reactions(post_id);
-CREATE INDEX IF NOT EXISTS idx_post_reactions_user_id ON post_reactions(user_id);
+create index if not exists idx_post_reactions_post_id on public.post_reactions(post_id);
+create index if not exists idx_post_reactions_user_id on public.post_reactions(user_id);
 
-CREATE TABLE IF NOT EXISTS comments (
-  id TEXT PRIMARY KEY,
-  post_id TEXT NOT NULL,
-  author_id TEXT NOT NULL,
-  parent_id TEXT,
-  content TEXT NOT NULL,
-  like_count INTEGER NOT NULL DEFAULT 0,
-  dislike_count INTEGER NOT NULL DEFAULT 0,
-  is_deleted INTEGER NOT NULL DEFAULT 0 CHECK (is_deleted IN (0, 1)),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (post_id) REFERENCES posts(id),
-  FOREIGN KEY (author_id) REFERENCES users(id),
-  FOREIGN KEY (parent_id) REFERENCES comments(id)
+create table if not exists public.comments (
+  id text primary key,
+  post_id text not null references public.posts(id) on delete cascade,
+  author_id text not null references public.users(id) on delete cascade,
+  parent_id text references public.comments(id) on delete cascade,
+  content text not null,
+  like_count integer not null default 0,
+  dislike_count integer not null default 0,
+  is_deleted boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
-CREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id);
-CREATE INDEX IF NOT EXISTS idx_comments_author_id ON comments(author_id);
-CREATE INDEX IF NOT EXISTS idx_comments_parent_id ON comments(parent_id);
-CREATE INDEX IF NOT EXISTS idx_comments_is_deleted ON comments(is_deleted);
+create index if not exists idx_comments_post_id on public.comments(post_id);
+create index if not exists idx_comments_author_id on public.comments(author_id);
+create index if not exists idx_comments_parent_id on public.comments(parent_id);
+create index if not exists idx_comments_is_deleted on public.comments(is_deleted);
 
-CREATE TABLE IF NOT EXISTS comment_reactions (
-  id TEXT PRIMARY KEY,
-  comment_id TEXT NOT NULL,
-  user_id TEXT NOT NULL,
-  type TEXT NOT NULL CHECK (type IN ('like', 'dislike')),
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY (comment_id) REFERENCES comments(id),
-  FOREIGN KEY (user_id) REFERENCES users(id),
-  UNIQUE (comment_id, user_id)
+create table if not exists public.comment_reactions (
+  id text primary key,
+  comment_id text not null references public.comments(id) on delete cascade,
+  user_id text not null references public.users(id) on delete cascade,
+  type text not null check (type in ('like', 'dislike')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (comment_id, user_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_comment_reactions_comment_id ON comment_reactions(comment_id);
-CREATE INDEX IF NOT EXISTS idx_comment_reactions_user_id ON comment_reactions(user_id);
+create index if not exists idx_comment_reactions_comment_id on public.comment_reactions(comment_id);
+create index if not exists idx_comment_reactions_user_id on public.comment_reactions(user_id);
+
+create table if not exists public.readings (
+  id text primary key,
+  type text not null,
+  user_id text not null references public.users(id) on delete cascade,
+  question text not null default '',
+  topic text not null default '',
+  card jsonb not null,
+  interpretation jsonb not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_readings_user_id on public.readings(user_id);
+create index if not exists idx_readings_created_at on public.readings(created_at desc);
+
+create table if not exists public.analyses (
+  id text primary key,
+  user_id text not null default 'local-test-user',
+  input jsonb not null,
+  summary text not null,
+  highlights jsonb not null,
+  detail text not null,
+  disclaimer text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists idx_analyses_created_at on public.analyses(created_at desc);
