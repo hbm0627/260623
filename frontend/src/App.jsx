@@ -18,7 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import kimSmiling from "./assets/kim-smiling.svg";
 import leePhotoFace from "./assets/lee-photo-face.svg";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:4000/api";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "https://mslxzygqdumhtrzhddvc.functions.supabase.co/api";
 const AUTH_STORAGE_KEY = "dino-auth";
 
 function getStoredAuth() {

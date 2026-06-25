@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { LockKeyhole, Sparkles, WalletCards } from "lucide-react";
 import { AppCard, AppScaffold } from "../../components/AppScaffold";
+import { API_BASE_URL } from "../../lib/api";
 
 function getStoredAuth() {
   try {
@@ -42,7 +43,7 @@ function TarotResultContent() {
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch("http://localhost:4000/api/tarot/interpret", {
+      const response = await fetch(`${API_BASE_URL}/tarot/interpret`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

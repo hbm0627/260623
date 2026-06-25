@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AppCard, AppScaffold } from "../components/AppScaffold";
+import { API_BASE_URL } from "../lib/api";
 
 const history = [
   ["정통 사주", "오늘의 핵심 흐름", "방금 전"],
@@ -16,7 +17,7 @@ export default function HistoryPage() {
     try {
       const auth = JSON.parse(localStorage.getItem("saju-auth") || "null");
       if (!auth?.session?.accessToken) return;
-      fetch("http://localhost:4000/api/readings", {
+      fetch(`${API_BASE_URL}/readings`, {
         headers: { Authorization: `Bearer ${auth.session.accessToken}` },
       })
         .then((response) => response.json())

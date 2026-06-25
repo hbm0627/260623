@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCw, Shuffle, Sparkles } from "lucide-react";
 import { AppCard, AppScaffold } from "../components/AppScaffold";
+import { API_BASE_URL } from "../lib/api";
 
 const topics = ["오늘의 운세", "연애", "일/직장", "금전", "선택"];
 
@@ -22,7 +23,7 @@ export default function TarotPage() {
     setMessage("");
     setFlipped(false);
     try {
-      const response = await fetch("http://localhost:4000/api/tarot/draw", {
+      const response = await fetch(`${API_BASE_URL}/tarot/draw`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ number }),
